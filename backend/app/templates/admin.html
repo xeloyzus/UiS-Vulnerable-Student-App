@@ -7,7 +7,9 @@
   <div class="col-md-4"><div class="stat-tile"><div class="text-muted small">Submissions</div><div class="h5 mb-0">{{ submissions_count }}</div></div></div>
 </div>
 <div class="mt-3">
+  {% if user.role == "admin" %}
   <a class="btn btn-primary me-2" href="/admin/users"><i class="bi bi-people me-1"></i>Manage users</a>
+  {% endif %}
   <a class="btn btn-outline-primary" href="/admin/grades"><i class="bi bi-award me-1"></i>Manage grades</a>
 </div>
 {% endblock %}

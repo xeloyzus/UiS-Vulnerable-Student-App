@@ -29,13 +29,12 @@
   <input class="form-control mb-2" name="phone" value="{{ profile.phone or '' }}" placeholder="Phone">
   <input class="form-control mb-2" name="address" value="{{ profile.address or '' }}" placeholder="Address">
   <textarea class="form-control mb-2" name="bio" placeholder="Bio">{{ profile.bio or '' }}</textarea>
-  <input type="hidden" name="role" value="{{ profile.role }}">
   <button class="btn btn-primary">Save profile</button>
 </form>
 
 <form method="post" action="/profile/avatar" enctype="multipart/form-data" class="card p-4">
   <h5 class="mb-3"><i class="bi bi-image me-1"></i>Upload avatar</h5>
-  <input type="file" class="form-control mb-3" name="avatar" required>
+  <input type="file" class="form-control mb-3" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" required>
   <button class="btn btn-secondary">Upload avatar</button>
 </form>
 {% endblock %}

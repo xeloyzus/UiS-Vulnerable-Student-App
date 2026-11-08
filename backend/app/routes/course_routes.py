@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from app.database import run_query, get_conn
+from app.database import run_query
 from app.auth import get_user_from_session
 
 router = APIRouter()
@@ -23,16 +23,11 @@ def search_courses(request: Request, q: str = ""):
     if not user:
         return RedirectResponse("/login", status_code=302)
 
-    sql = f"SELECT * FROM courses WHERE title ILIKE '%{q}%' ORDER BY id"
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
-            cols = [d[0] for d in cur.description]
-            courses = [dict(zip(cols, r)) for r in rows]
-    finally:
-        conn.close()
+    courses = run_query(
+        "SELECT * FROM courses WHERE title ILIKE %s ORDER BY id",
+        (f"%{q}%",),
+        fetchall=True,
+    )
 
     return templates.TemplateResponse(
         "courses.html", {"request": request, "user": user, "courses": courses, "search_query": q}

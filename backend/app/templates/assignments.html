@@ -9,7 +9,8 @@
       <option value="{{ a.id }}">{{ a.title }}</option>
     {% endfor %}
   </select>
-  <input type="file" class="form-control mb-3" name="file" required>
+  <label for="submission-file" class="form-label">PDF or DOCX, up to 10 MiB</label>
+  <input type="file" id="submission-file" class="form-control mb-3" name="file" accept=".pdf,.docx" required>
   <button class="btn btn-primary">Upload submission</button>
 </form>
 
@@ -17,7 +18,7 @@
 <ul class="list-group">
 {% for s in submissions %}
   <li class="list-group-item">
-    <i class="bi bi-file-earmark-text me-1"></i>{{ s.filename }} - <a href="/uploads/{{ s.file_path }}">Open</a>
+    <i class="bi bi-file-earmark-text me-1"></i>{{ s.filename }} - <a href="/assignments/submissions/{{ s.id }}/download">Download</a>
   </li>
 {% else %}
   <li class="list-group-item text-muted">No submissions yet.</li>

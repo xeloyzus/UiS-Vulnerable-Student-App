@@ -1,14 +1,27 @@
-import os
+from pathlib import Path
 from uuid import uuid4
-from fastapi import APIRouter, Request, Form, UploadFile, File
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi import APIRouter, Request, Form, UploadFile, File, HTTPException
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from app.database import run_query
 from app.auth import get_user_from_session
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
-UPLOAD_DIR = "app/uploads"
+UPLOAD_DIR = Path("app/uploads")
+MAX_AVATAR_BYTES = 10 * 1024 * 1024
+
+
+def avatar_type(header: bytes) -> tuple[str, str] | None:
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png", "image/png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return ".jpg", "image/jpeg"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif", "image/gif"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return ".webp", "image/webp"
+    return None
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -55,8 +68,9 @@ def profile_by_id(request: Request, user_id: int):
     user = get_user_from_session(request)
     if not user:
         return RedirectResponse("/login", status_code=302)
-    profile = run_query("SELECT * FROM users WHERE id=%s", (user_id,), fetchone=True)
-    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "profile": profile})
+    if user_id != user["id"]:
+        raise HTTPException(status_code=403, detail="You can only view your own profile")
+    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "profile": user})
 
 
 @router.post("/profile/update")
@@ -66,7 +80,6 @@ def update_profile(
     phone: str = Form(""),
     address: str = Form(""),
     bio: str = Form(""),
-    role: str = Form("student"),
 ):
     user = get_user_from_session(request)
     if not user:
@@ -74,10 +87,10 @@ def update_profile(
 
     run_query(
         """
-        UPDATE users SET full_name=%s, phone=%s, address=%s, bio=%s, role=%s
+        UPDATE users SET full_name=%s, phone=%s, address=%s, bio=%s
         WHERE id=%s
         """,
-        (full_name, phone, address, bio, role, user["id"]),
+        (full_name, phone, address, bio, user["id"]),
         commit=True,
     )
     return RedirectResponse(f"/profile/{user['id']}", status_code=302)
@@ -89,11 +102,34 @@ def upload_avatar(request: Request, avatar: UploadFile = File(...)):
     if not user:
         return RedirectResponse("/login", status_code=302)
 
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    filename = f"avatar_{user['id']}_{uuid4().hex}_{avatar.filename}"
-    path = os.path.join(UPLOAD_DIR, filename)
-    with open(path, "wb") as f:
-        f.write(avatar.file.read())
+    content = avatar.file.read(MAX_AVATAR_BYTES + 1)
+    if len(content) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=413, detail="Maximum avatar size is 10 MiB")
+    image_type = avatar_type(content[:12])
+    if not image_type:
+        raise HTTPException(status_code=415, detail="Upload a PNG, JPEG, GIF, or WebP image")
+    suffix, _ = image_type
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"avatar_{user['id']}_{uuid4().hex}{suffix}"
+    path = UPLOAD_DIR / filename
+    with path.open("xb") as out:
+        out.write(content)
 
     run_query("UPDATE users SET avatar_path=%s WHERE id=%s", (filename, user["id"]), commit=True)
     return RedirectResponse(f"/profile/{user['id']}", status_code=302)
+
+
+@router.get("/uploads/{filename}")
+def download_avatar(request: Request, filename: str):
+    user = get_user_from_session(request)
+    if not user or user["avatar_path"] != filename or "\\" in filename:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    path = (UPLOAD_DIR / filename).resolve()
+    if path.parent != UPLOAD_DIR.resolve() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    with path.open("rb") as avatar:
+        image_type = avatar_type(avatar.read(12))
+    if not image_type:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    _, media_type = image_type
+    return FileResponse(path, media_type=media_type, headers={"X-Content-Type-Options": "nosniff"})

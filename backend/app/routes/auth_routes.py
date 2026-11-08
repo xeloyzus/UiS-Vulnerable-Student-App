@@ -1,4 +1,7 @@
 import time
+from collections import OrderedDict
+from math import ceil
+from threading import Lock
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -8,6 +11,27 @@ from app.email_service import send_reset_email
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+LOGIN_WINDOW_SECONDS = 60
+login_windows = OrderedDict()
+login_windows_lock = Lock()
+
+
+def login_retry_after(email: str, source: str) -> int:
+    limits = ((("account", email.strip().casefold()), 5), (("source", source), 30))
+    with login_windows_lock:
+        now = time.monotonic()
+        while login_windows and next(iter(login_windows.values()))[0] <= now:
+            login_windows.popitem(last=False)
+
+        windows = [(key, limit, *login_windows.get(key, (now + LOGIN_WINDOW_SECONDS, 0)))
+                   for key, limit in limits]
+        retry_after = max((ceil(expires - now) for _, limit, expires, count in windows
+                           if count >= limit), default=0)
+        if retry_after:
+            return retry_after
+        for key, _, expires, count in windows:
+            login_windows[key] = (expires, count + 1)
+        return 0
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -23,19 +47,24 @@ def login_page(request: Request):
 
 @router.post("/login", response_class=HTMLResponse)
 def login(request: Request, email: str = Form(...), password: str = Form(...)):
-    user = run_query("SELECT * FROM users WHERE email=%s", (email,), fetchone=True)
-    if not user:
+    retry_after = login_retry_after(email, request.client.host if request.client else "")
+    if retry_after:
         return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "No account found with that email."}
+            "login.html",
+            {"request": request, "error": "Too many login attempts. Try again shortly."},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
         )
-    if not verify_password(password, user["password_hash"]):
+
+    user = run_query("SELECT * FROM users WHERE email=%s", (email,), fetchone=True)
+    if not user or not verify_password(password, user["password_hash"]):
         return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "Invalid password for this account."}
+            "login.html", {"request": request, "error": "Invalid email or password."}
         )
 
     token = create_session(user["id"])
     resp = RedirectResponse("/dashboard", status_code=302)
-    resp.set_cookie("session_token", token)
+    resp.set_cookie("session_token", token, httponly=True, samesite="lax", secure=request.url.scheme == "https")
     return resp
 
 
